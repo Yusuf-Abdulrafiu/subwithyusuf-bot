@@ -1,176 +1,115 @@
-print("✅ Script started")
+import json
+import logging
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler,
-    MessageHandler, ContextTypes, ConversationHandler,
-    filters
-)
+# Logging setup
+logging.basicConfig(level=logging.INFO)
 
-print("✅ Libraries imported")
+# Load plans
+with open("plans.json", "r") as f:
+    plans_data = json.load(f)
 
-BOT_TOKEN = "8162817648:AAHtL2CF1sQnvjpTzoU3lDAMFXD_ivmFtIE"
+# SmePlug Secret Key
+SMEPLUG_SECRET_KEY = "fb9e22ecc3307b65e7502d6e73f8c2f90b156f0fdfb0caad53561c80e98b3057"
 
-# States for buy_airtime
-PHONE, AMOUNT, NETWORK = range(3)
+# States for conversation
+NETWORK, PLAN_TYPE, DATA_PLAN, PHONE = range(4)
 
-# States for buy_data
-DATA_NETWORK, DATA_TYPE, DATA_PLAN, DATA_PHONE = range(3, 7)
-
-# ------------------ /start ------------------ #
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome to SubwithYusuf!\nUse /buy_airtime or /buy_data to begin.")
+    await update.message.reply_text("Welcome to SubwithYusuf!\nUse /buy_airtime or /buy_data to begin.")
 
-# ------------------ /buy_airtime ------------------ #
-async def buy_airtime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📱 Enter phone number to recharge:")
-    return PHONE
-
-async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["phone"] = update.message.text
-    await update.message.reply_text("💰 Enter amount (e.g. 100, 200):")
-    return AMOUNT
-
-async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["amount"] = update.message.text
-    keyboard = [["MTN", "Airtel", "Glo", "9mobile"]]
-    await update.message.reply_text(
-        "📶 Choose the network:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-    )
+# Buy data command
+async def buy_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton(net.upper(), callback_data=net)] for net in plans_data.keys()]
+    await update.message.reply_text("📡 Select network:", reply_markup=InlineKeyboardMarkup(keyboard))
     return NETWORK
 
-async def get_network(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["network"] = update.message.text
-    phone = context.user_data["phone"]
-    amount = context.user_data["amount"]
-    network = context.user_data["network"]
-    await update.message.reply_text(
-        f"✅ Recharge details:\n📱 Phone: {phone}\n💰 Amount: ₦{amount}\n📶 Network: {network}\n\n(This is a test preview)"
-    )
-    return ConversationHandler.END
+async def network_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["network"] = query.data
 
-# ------------------ /buy_data ------------------ #
-async def buy_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["MTN", "Airtel"]]
-    await update.message.reply_text(
-        "📶 Select network for data purchase:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-    )
-    return DATA_NETWORK
+    keyboard = [[InlineKeyboardButton(ptype.upper(), callback_data=ptype)] for ptype in plans_data[query.data].keys()]
+    await query.edit_message_text("📂 Select plan type:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return PLAN_TYPE
 
-async def get_data_network(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    network = update.message.text
-    context.user_data["data_network"] = network
+async def plan_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["plan_type"] = query.data
 
-    if network == "MTN":
-        keyboard = [["SME", "Data Share"]]
-    elif network == "Airtel":
-        keyboard = [["Direct Gifting", "Awoof Gifting"]]
-    else:
-        await update.message.reply_text("❌ This network is not yet supported.")
-        return ConversationHandler.END
-
-    await update.message.reply_text(
-        f"📁 Choose plan type for {network}:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-    )
-    return DATA_TYPE
-
-async def get_data_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    plan_type = update.message.text
-    context.user_data["data_type"] = plan_type
-    plans = []
-
-    if context.user_data["data_network"] == "MTN":
-        if plan_type == "SME":
-            await update.message.reply_text("🚫 MTN SME is currently unavailable.")
-            return ConversationHandler.END
-        elif plan_type == "Data Share":
-            plans = ["5GB - ₦2500 (30 days)"]
-    elif context.user_data["data_network"] == "Airtel":
-        if plan_type == "Direct Gifting":
-            plans = [
-                "500MB - ₦600 (7 days)",
-                "1GB - ₦600 (1 day)",
-                "1.5GB - ₦1100 (7 days)",
-                "2GB - ₦1600 (30 days)",
-                "3GB - ₦2400 (30 days)",
-                "4GB - ₦3000 (30 days)"
-            ]
-        elif plan_type == "Awoof Gifting":
-            plans = [
-                "150MB - ₦100 (1 day)",
-                "10GB - ₦3500 (30 days)"
-            ]
-        else:
-            await update.message.reply_text("❌ Invalid Airtel plan type.")
-            return ConversationHandler.END
-
-    await update.message.reply_text(
-        "📦 Choose a data plan:",
-        reply_markup=ReplyKeyboardMarkup([[p] for p in plans], one_time_keyboard=True)
-    )
+    plans = plans_data[context.user_data["network"]][query.data]
+    keyboard = [
+        [InlineKeyboardButton(f"{size} - ₦{price}", callback_data=size)] for size, price in plans.items()
+    ]
+    await query.edit_message_text("📦 Select data plan:", reply_markup=InlineKeyboardMarkup(keyboard))
     return DATA_PLAN
 
-async def get_data_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    selected_plan = update.message.text
-    context.user_data["data_plan"] = selected_plan
-    await update.message.reply_text("📱 Enter recipient phone number:")
-    return DATA_PHONE
+async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["plan"] = query.data
+    await query.edit_message_text("📱 Enter phone number to receive data:")
+    return PHONE
 
-async def get_data_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def phone_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text
-    context.user_data["data_phone"] = phone
+    context.user_data["phone"] = phone
 
-    network = context.user_data["data_network"]
-    plan_type = context.user_data["data_type"]
-    plan = context.user_data["data_plan"]
+    # Extract values
+    network = context.user_data["network"]
+    plan_type = context.user_data["plan_type"]
+    plan = context.user_data["plan"]
 
-    await update.message.reply_text(
-        f"✅ You selected:\n📶 Network: {network}\n📁 Plan type: {plan_type}\n📦 Plan: {plan}\n📱 Phone: {phone}\n\n(This is a test preview)"
-    )
+    # Build request
+    headers = {
+        "Authorization": f"Bearer {SMEPLUG_SECRET_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "network": network,
+        "plan": plan,
+        "phone": phone
+    }
+
+    # Send request to SmePlug
+    try:
+        response = requests.post("https://smeplug.ng/api/v1/data", headers=headers, json=payload)
+        data = response.json()
+        if data.get("success"):
+            message = f"✅ {plan} successfully sent to {phone} on {network.upper()} ({plan_type.upper()})"
+        else:
+            message = f"❌ Failed to send data: {data.get('message', 'Unknown error')}"
+    except Exception as e:
+        message = f"🚨 Error contacting SmePlug: {str(e)}"
+
+    await update.message.reply_text(message)
     return ConversationHandler.END
 
-# ------------------ cancel ------------------ #
+# Cancel command
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Operation cancelled.")
+    await update.message.reply_text("❌ Cancelled.")
     return ConversationHandler.END
 
-# ------------------ main ------------------ #
-if __name__ == '__main__':
-    print("✅ Starting bot setup...")
+# App
+app = ApplicationBuilder().token(8162817648:AAHtL2CF1sQnvjpTzoU3lDAMFXD_ivmFtIE).build()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+conv_handler = ConversationHandler(
+    entry_points=[CommandHandler("buy_data", buy_data)],
+    states={
+        NETWORK: [CallbackQueryHandler(network_selected)],
+        PLAN_TYPE: [CallbackQueryHandler(plan_type_selected)],
+        DATA_PLAN: [CallbackQueryHandler(plan_selected)],
+        PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, phone_entered)]
+    },
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
 
-    # Handlers
-    app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(conv_handler)
 
-    # Airtime
-    airtime_handler = ConversationHandler(
-        entry_points=[CommandHandler("buy_airtime", buy_airtime)],
-        states={
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_amount)],
-            NETWORK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_network)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(airtime_handler)
-
-    # Data
-    data_handler = ConversationHandler(
-        entry_points=[CommandHandler("buy_data", buy_data)],
-        states={
-            DATA_NETWORK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_network)],
-            DATA_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_type)],
-            DATA_PLAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_plan)],
-            DATA_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_phone)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(data_handler)
-
-    print("✅ All handlers added")
-    print("🚀 Bot is running...")
-    app.run_polling()
+# Run
+app.run_polling()
